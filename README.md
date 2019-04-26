@@ -49,3 +49,6 @@ db name = firekylin
                 proxy_pass http://localhost:8002/;
         }
     }
+
+
+export HASHED_PASSWORD=$(openssl passwd -apr1 $PASSWORD)
