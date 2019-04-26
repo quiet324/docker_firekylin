@@ -37,7 +37,7 @@ services:
       - default
       - traefik-public
     deploy:
-      replicas: ${CONSUL_REPLICAS:-3}
+      replicas: ${CONSUL_REPLICAS:-1}
       placement:
         preferences:
           - spread: node.id
@@ -47,7 +47,7 @@ services:
       - 80:80
       - 443:443
     deploy:
-      replicas: ${TRAEFIK_REPLICAS:-3}
+      replicas: ${TRAEFIK_REPLICAS:-1}
       placement:
         constraints:
           - node.role == manager
@@ -98,7 +98,7 @@ services:
       - default
       - traefik-public
     deploy:
-      replicas: 2
+      replicas: 1
       resources:
         limits:
           cpus: "0.1"
@@ -137,7 +137,7 @@ services:
       resources:
         limits:
           cpus: "0.2"
-          memory: 50M
+          memory: 200M
       restart_policy:
         condition: on-failure      
       labels:
@@ -171,6 +171,10 @@ services:
       - mysql
     deploy:
       replicas: 1
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 400M
       placement:
         constraints:
           - node.role == manager
