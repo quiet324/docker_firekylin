@@ -1,68 +1,233 @@
-version: '3.6'
+version: '3.7'
+
 services:
-  traefik:
-    image: traefik:alpine
-    deploy:
-      placement:
-        constraints: [node.role == manager]
+  consul-leader:
+    image: consul
+    command: agent -server -client=0.0.0.0 -bootstrap -ui
+    volumes:
+      - consul-data-leader:/consul/data
+    environment:
+      - CONSUL_BIND_INTERFACE=eth0
+      - 'CONSUL_LOCAL_CONFIG={"leave_on_terminate": true}'
     networks:
-      - mynet
+      - default
+      - traefik-public
+    deploy:
+      labels:
+        - traefik.frontend.rule=Host:consul.${DOMAIN}
+        - traefik.enable=true
+        - traefik.port=8500
+        - traefik.tags=${TRAEFIK_PUBLIC_TAG:-traefik-public}
+        - traefik.docker.network=traefik-public
+        # Traefik service that listens to HTTP
+        - traefik.redirectorservice.frontend.entryPoints=http
+        - traefik.redirectorservice.frontend.redirect.entryPoint=https
+        # Traefik service that listens to HTTPS
+        - traefik.webservice.frontend.entryPoints=https
+        - traefik.frontend.auth.basic.users=${USERNAME}:${HASHED_PASSWORD}
+  consul-replica:
+    image: consul
+    command: agent -server -client=0.0.0.0 -retry-join="consul-leader"
+    volumes:
+      - consul-data-replica:/consul/data
+    environment:
+      - CONSUL_BIND_INTERFACE=eth0
+      - 'CONSUL_LOCAL_CONFIG={"leave_on_terminate": true}'
+    networks:
+      - default
+      - traefik-public
+    deploy:
+      replicas: ${CONSUL_REPLICAS:-3}
+      placement:
+        preferences:
+          - spread: node.id
+  traefik:
+    image: traefik:v1.7
+    ports:
+      - 80:80
+      - 443:443
+    deploy:
+      replicas: ${TRAEFIK_REPLICAS:-3}
+      placement:
+        constraints:
+          - node.role == manager
+        preferences:
+          - spread: node.id
+      labels:
+        - traefik.frontend.rule=Host:traefik.${DOMAIN}
+        - traefik.enable=true
+        - traefik.port=8080
+        - traefik.tags=traefik-public
+        - traefik.docker.network=traefik-public
+        # Traefik service that listens to HTTP
+        - traefik.redirectorservice.frontend.entryPoints=http
+        - traefik.redirectorservice.frontend.redirect.entryPoint=https
+        # Traefik service that listens to HTTPS
+        - traefik.webservice.frontend.entryPoints=https
+        - traefik.frontend.auth.basic.users=${USERNAME}:${HASHED_PASSWORD}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ./traefik.toml:/traefik.toml
-      - ./acme.json:/acme.json # chmod 600 acme.json
-    ports:
-      - "80:80"
-      - "443:443"
-      - "8080:8080"
-  main:
-      image: nginx
-      networks:
-        - mynet
-      deploy:
-        replicas: 2
-        resources:
-          limits:
-            cpus: "0.1"
-            memory: 50M
-        restart_policy:
-          condition: on-failure
-        labels:
-          - "traefik.port=80"
-          - "traefik.backend=main"
-          - "traefik.frontend.rule=Host:liangyoult.com"
+    command: >
+      --docker
+      --docker.swarmmode
+      --docker.watch
+      --docker.exposedbydefault=false
+      --constraints=tag==traefik-public
+      --entrypoints='Name:http Address::80'
+      --entrypoints='Name:https Address::443 TLS'
+      --consul
+      --consul.endpoint="consul-leader:8500"
+      --acme
+      --acme.email=${EMAIL}
+      --acme.storage="traefik/acme/account"
+      --acme.entryPoint=https
+      --acme.httpChallenge.entryPoint=http
+      --acme.onhostrule=true
+      --acme.acmelogging=true
+      --logLevel=INFO
+      --accessLog
+      --api
+    networks:
+      - default
+      - traefik-public
+    depends_on:
+      - consul-leader
   two:
-      image: jwilder/whoami
-      networks:
-        - mynet
-      deploy:
-        replicas: 2
-        resources:
-          limits:
-            cpus: "0.1"
-            memory: 50M
-        restart_policy:
-          condition: on-failure      
-        labels:
-          - "traefik.port=8000"
-          - "traefik.backend=two"
-          - "traefik.frontend.rule=Host:two.liangyoult.com"
-  three:
-      image: emilevauge/whoami
-      networks:
-        - mynet
-      deploy:
-        replicas: 2
-        resources:
-          limits:
-            cpus: "0.1"
-            memory: 50M
-        restart_policy:
-          condition: on-failure      
-        labels:
-          - "traefik.port=80"
-          - "traefik.backend=three"
-          - "traefik.frontend.rule=Host:three.liangyoult.com"
+    image: jwilder/whoami
+    networks:
+      - default
+      - traefik-public
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: "0.1"
+          memory: 50M
+      restart_policy:
+        condition: on-failure      
+      labels:
+        - traefik.frontend.rule=Host:two.${DOMAIN}
+        - traefik.enable=true
+        - traefik.port=8000
+        - traefik.tags=${TRAEFIK_PUBLIC_TAG:-traefik-public}
+        - traefik.docker.network=traefik-public
+        # Traefik service that listens to HTTP
+        - traefik.redirectorservice.frontend.entryPoints=http
+        - traefik.redirectorservice.frontend.redirect.entryPoint=https
+        # Traefik service that listens to HTTPS
+        - traefik.webservice.frontend.entryPoints=https
+        # - traefik.frontend.auth.basic.users=${USERNAME}:${HASHED_PASSWORD}
+
+
+
+        # - "traefik.port=8000"
+        # - "traefik.backend=two"
+        # - "traefik.frontend.rule=Host:two.liangyouapp.com"
+  firekylin:
+    build: 
+      image: paulzeng/firekylin
+      context: ./firekylin
+      dockerfile: Dockerfile
+    networks:
+      - default
+      - traefik-public
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+    depends_on:
+      - mysql
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: "0.2"
+          memory: 50M
+      restart_policy:
+        condition: on-failure      
+      labels:
+        - traefik.frontend.rule=Host:${DOMAIN}
+        - traefik.enable=true
+        - traefik.port=8360
+        - traefik.tags=${TRAEFIK_PUBLIC_TAG:-traefik-public}
+        - traefik.docker.network=traefik-public
+        # Traefik service that listens to HTTP
+        - traefik.redirectorservice.frontend.entryPoints=http
+        - traefik.redirectorservice.frontend.redirect.entryPoint=https
+        # Traefik service that listens to HTTPS
+        - traefik.webservice.frontend.entryPoints=https
+        # - traefik.frontend.auth.basic.users=${USERNAME}:${HASHED_PASSWORD}
+
+
+
+        # - "traefik.port=8000"
+        # - "traefik.backend=two"
+        # - "traefik.frontend.rule=Host:two.liangyouapp.com"
+
+  mysql:
+    image: 'mysql:5.7'
+    networks:
+      - default
+      - traefik-public
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - ./mysql/data/:/var/lib/mysql/   
+    depends_on:
+      - mysql
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure   
+    environment:
+      MYSQL_ROOT_PASSWORD: "123456"
+      MYSQL_DATABASE: "firekylin"
+      MYSQL_USER: "blog"
+      MYSQL_PASSWORD: "123456"
+
+  isso:
+    image: wonderfall/isso
+    environment:
+      - GID=1000
+      - UID=1000 
+    networks:
+      - default
+      - traefik-public
+    volumes:
+      - ./isso/config:/config
+      - ./isso/db:/db
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: "0.2"
+          memory: 50M
+      restart_policy:
+        condition: on-failure      
+      labels:
+        - traefik.frontend.rule=Host:${DOMAIN}/isso/
+        - traefik.enable=true
+        - traefik.port=8080
+        - traefik.tags=${TRAEFIK_PUBLIC_TAG:-traefik-public}
+        - traefik.docker.network=traefik-public
+        # Traefik service that listens to HTTP
+        - traefik.redirectorservice.frontend.entryPoints=http
+        - traefik.redirectorservice.frontend.redirect.entryPoint=https
+        # Traefik service that listens to HTTPS
+        - traefik.webservice.frontend.entryPoints=https
+        # - traefik.frontend.auth.basic.users=${USERNAME}:${HASHED_PASSWORD}
+
+
+
+        # - "traefik.port=8000"
+        # - "traefik.backend=two"
+        # - "traefik.frontend.rule=Host:two.liangyouapp.com"
+
+        
+volumes:
+  consul-data-leader:
+  consul-data-replica:
+
 networks:
-  mynet:
-    driver: overlay
+  traefik-public:
+    external: true
