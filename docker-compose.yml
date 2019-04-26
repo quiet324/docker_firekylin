@@ -124,10 +124,7 @@ services:
         # - "traefik.backend=two"
         # - "traefik.frontend.rule=Host:two.liangyouapp.com"
   firekylin:
-    build: 
-      image: paulzeng/firekylin
-      context: ./firekylin
-      dockerfile: Dockerfile
+    image: paul-firekylin
     networks:
       - default
       - traefik-public
